@@ -30,11 +30,11 @@ const Home = () => {
 			console.log(version, platform);
 			const newVersion = version.version;
 			if (version.platform === 'win') {
-				setDownloadLink(`https://github.com/Nixoals/vitta-companion/releases/download/${newVersion}/VittaCompanion_Setup_${newVersion.replace('v', '')}.exe`);
+				setDownloadLink(`https://github.com/vittascience/vitta-companion/releases/download/${newVersion}/VittaCompanion_Setup_${newVersion.replace('v', '')}.exe`);
 			} else if (version.platform === 'mac') {
-				setDownloadLink(`https://github.com/Nixoals/vitta-companion/releases/download/${newVersion}/VittaCompanion_${newVersion.replace('v', '')}_arm64.dmg`);
+				setDownloadLink(`https://github.com/vittascience/vitta-companion/releases/download/${newVersion}/VittaCompanion_${newVersion.replace('v', '')}_arm64.dmg`);
 			} else if (version.platform === 'linux') {
-				setDownloadLink(`https://github.com/Nixoals/vitta-companion/releases/download/${newVersion}/VittaCompanion_${newVersion.replace('v', '')}_amd64.deb`);
+				setDownloadLink(`https://github.com/vittascience/vitta-companion/releases/download/${newVersion}/VittaCompanion_${newVersion.replace('v', '')}_amd64.deb`);
 			}
 			console.log(downloadLink);
 			setMessageUpdate('une mise à jour est disponible');
