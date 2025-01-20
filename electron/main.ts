@@ -15,7 +15,7 @@ let currentRobot:String = '';
 const checkVersion = async (platform:string) => {
 	let version = '';
 	const appVersion = 'v' + app.getVersion();
-	const url = 'https://api.github.com/repos/Nixoals/vitta-companion/releases/latest'; // update with the new repo when available on vittascience github
+	const url = 'https://api.github.com/repos/vittascience/vitta-companion/releases/latest'; // update with the new repo when available on vittascience github
 
 	try {
 		const response = await fetch(url);
