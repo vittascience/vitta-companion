@@ -242,6 +242,15 @@ export default class MainNao {
 				}, 500);
 			});
 
+			this.socket.on('unsubscribe_sonar', async () => {
+				if (this.intervalSonar) {
+					clearInterval(this.intervalSonar);
+					this.intervalSonar = null;
+				} else {
+					console.log('Sonar not subscribed yet');
+				}
+			});
+
 			this.socket.on('get_com', async () => {
 				this.socket.emit('event', 'subscribed to com command');
 				this.intervalCOM = setInterval(async () => {
@@ -713,8 +722,8 @@ export default class MainNao {
 
 	async sendSSHCommand(code: string) {
 		if (this.programRunning) {
-			console.log('A program is already running');
-			return;
+			// may be not the best way to handle this
+			await this.killProgram();
 		}
 		this.sshConnexion = new NodeSSH({ debug: console.log });
 		try {
@@ -730,6 +739,13 @@ export default class MainNao {
 				tryKeyboard: true,
 				port: 22,
 			});
+
+			// check first if a vittascience program is already running (in case of closing the app without stopping the program)
+			const checkResult = await this.sshConnexion.execCommand('ps -ef | grep "nao_temp_code.py" | grep -v grep');
+			if (checkResult.stdout) {
+				console.log('A program is already running: ', checkResult.stdout);
+				await this.sshConnexion.execCommand('pkill -f "/home/nao/nao_temp_code.py"');
+			}
 
 			await this.sshConnexion.putFile(tempFilePath, '/home/nao/nao_temp_code.py');
 
@@ -789,6 +805,8 @@ export default class MainNao {
 
 	async disconnect() {
 		this.clearIntervals();
+
+		await this.killProgram();
 
 		if (this.isNaoConnected) {
 			try {
