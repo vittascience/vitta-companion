@@ -27,6 +27,7 @@ export default class MainNao {
 	ALBattery: any | null;
 	ALVideoDevice: any | null;
 	ALMemory: any | null;
+	ALSystem: any | null;
 	cameraClient: any;
 	isNaoConnected: boolean;
 	programRunning: boolean;
@@ -61,6 +62,7 @@ export default class MainNao {
 		this.ALBattery = null;
 		this.ALVideoDevice = null;
 		this.ALMemory = null;
+		this.ALSystem = null;
 		this.cameraClient = null;
 		this.isNaoConnected = false;
 		this.intervalJointsStates = null;
@@ -84,7 +86,7 @@ export default class MainNao {
 		this.robotUtilsNao = new RobotUtilsNao();
 		console.log('robotUtilsNao', this.robotUtilsNao);
 		this.robotUtilsNao.onService(
-			(ALDiagnosis:any, ALLeds: any, ALTextToSpeech: any, ALAnimatedSpeech: any, ALRobotPosture: any, ALMotion: any, ALSonar: any, ALAutonomousLife: any, ALBehaviorManager: any, ALBattery: any, ALVideoDevice: any, ALMemory: any) => {
+			(ALDiagnosis:any, ALLeds: any, ALTextToSpeech: any, ALAnimatedSpeech: any, ALRobotPosture: any, ALMotion: any, ALSonar: any, ALAutonomousLife: any, ALBehaviorManager: any, ALBattery: any, ALVideoDevice: any, ALMemory: any, ALSystem:any) => {
 				// retriev all APIs commands
 				// don't forget to remap all services in wantedServices array in robotUtilsNao (onServices) in the same call order (otherwise it will not work due to the minimization of function params)
 				this.ALDiagnosis = ALDiagnosis;
@@ -99,6 +101,7 @@ export default class MainNao {
 				this.ALBattery = ALBattery;
 				this.ALVideoDevice = ALVideoDevice;
 				this.ALMemory = ALMemory;
+				this.ALSystem = ALSystem;
 
 				this.ALSonar.subscribe('SonarSubscriber', 1, 0.0);
 
@@ -198,6 +201,15 @@ export default class MainNao {
 					this.currentAction = null;
 					callback('action_done');
 				});
+			});
+
+			this.socket.on('realtime_command', async (data: any) => {
+				console.log('realtime_command', data.joint, data.value);
+				try {
+					await this.ALMotion.setAngles([data.joint], [data.value], 0.2);
+				} catch (error) {
+					console.error('Error setting angles:', error);
+				}
 			});
 
 			// this.socket.on('subscribe_single_joint_state', async () => {
@@ -337,6 +349,19 @@ export default class MainNao {
 						}
 					} catch (error) {
 						console.error('Error resting Nao:', error);
+					}
+				}
+			});
+
+			this.socket.on('shutdown_command', async () => {
+				if (this.ALSystem && !this.programRunning) {
+					try {
+						await this.ALSystem.shutdown();
+						if (this.socket !== null) {
+							this.socket.emit('event', 'shutdown');
+						}
+					} catch (error) {
+						console.error('Error shutting down Nao:', error);
 					}
 				}
 			});
