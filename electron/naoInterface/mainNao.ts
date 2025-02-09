@@ -4,6 +4,7 @@ const { NodeSSH } = require('node-ssh');
 const os = require('node:os');
 const path = require('node:path');
 const fs = require('node:fs');
+const axios = require('axios');
 import { ipcMain } from 'electron';
 
 // const RobotUtilsNao = require('./naoInterface/utils/robotutils.js')
@@ -28,6 +29,7 @@ export default class MainNao {
 	ALVideoDevice: any | null;
 	ALMemory: any | null;
 	ALSystem: any | null;
+	ALAudioRecorder: any | null;
 	cameraClient: any;
 	isNaoConnected: boolean;
 	programRunning: boolean;
@@ -44,6 +46,8 @@ export default class MainNao {
 	status: boolean;
 	isVittaConnected: boolean;
 	isNaoQiConnected: boolean;
+	aiStoredPrompt: any;
+	aiImagePrediction: any;
 	window: any;
 
 	constructor(win: any) {
@@ -63,6 +67,7 @@ export default class MainNao {
 		this.ALVideoDevice = null;
 		this.ALMemory = null;
 		this.ALSystem = null;
+		this.ALAudioRecorder = null;
 		this.cameraClient = null;
 		this.isNaoConnected = false;
 		this.intervalJointsStates = null;
@@ -77,6 +82,8 @@ export default class MainNao {
 		this.status = false;
 		this.isVittaConnected = false;
 		this.isNaoQiConnected = false;
+		this.aiStoredPrompt = [];
+		this.aiImagePrediction = [];
 		this.io = null;
 		this.initServer();
 		this.initIpc();
@@ -85,10 +92,12 @@ export default class MainNao {
 	initNaoConnection(clientIp: string) {
 		this.robotUtilsNao = new RobotUtilsNao();
 		console.log('robotUtilsNao', this.robotUtilsNao);
+		console.log(process.env.TEST_COUCOU);
 		this.robotUtilsNao.onService(
-			(ALDiagnosis:any, ALLeds: any, ALTextToSpeech: any, ALAnimatedSpeech: any, ALRobotPosture: any, ALMotion: any, ALSonar: any, ALAutonomousLife: any, ALBehaviorManager: any, ALBattery: any, ALVideoDevice: any, ALMemory: any, ALSystem:any) => {
+			(ALAudioRecorder: any, ALDiagnosis: any, ALLeds: any, ALTextToSpeech: any, ALAnimatedSpeech: any, ALRobotPosture: any, ALMotion: any, ALSonar: any, ALAutonomousLife: any, ALBehaviorManager: any, ALBattery: any, ALVideoDevice: any, ALMemory: any, ALSystem: any) => {
 				// retriev all APIs commands
 				// don't forget to remap all services in wantedServices array in robotUtilsNao (onServices) in the same call order (otherwise it will not work due to the minimization of function params)
+				this.ALAudioRecorder = ALAudioRecorder;
 				this.ALDiagnosis = ALDiagnosis;
 				this.ALTextToSpeech = ALTextToSpeech;
 				this.ALAnimatedSpeech = ALAnimatedSpeech;
@@ -105,6 +114,7 @@ export default class MainNao {
 
 				this.ALSonar.subscribe('SonarSubscriber', 1, 0.0);
 
+				this.declareMemoryEvents();
 				this.subscribeToALMemoryEvent();
 
 				if (this.robotUtilsNao.session.socket().socket.connected) {
@@ -118,7 +128,7 @@ export default class MainNao {
 					}
 				}
 			},
-			(reason:string) => {
+			(reason: string) => {
 				console.log("an error occured can't connect to nao :", reason);
 			},
 			clientIp
@@ -212,6 +222,11 @@ export default class MainNao {
 				}
 			});
 
+			this.socket.on('ai_image_prediction', (data: any) => {
+				this.aiImagePrediction = data;
+				this.ALMemory.raiseEvent('AIImagePrediction', data);
+			});
+
 			// this.socket.on('subscribe_single_joint_state', async () => {
 			// 	const jointAngles = await this.ALMotion.getAngles('Body', true);
 			// 	this.socket.emit('single_joint_state_value', jointAngles);
@@ -239,8 +254,8 @@ export default class MainNao {
 			this.socket.on('subscribe_sonar', async () => {
 				this.intervalSonar = setInterval(async () => {
 					try {
-						const sonarLeft = await this.ALMemory.getData("Device/SubDeviceList/US/Left/Sensor/Value");
-						const sonarRight = await this.ALMemory.getData("Device/SubDeviceList/US/Right/Sensor/Value");
+						const sonarLeft = await this.ALMemory.getData('Device/SubDeviceList/US/Left/Sensor/Value');
+						const sonarRight = await this.ALMemory.getData('Device/SubDeviceList/US/Right/Sensor/Value');
 						if (this.socket !== null && typeof this.socket.emit === 'function') {
 							this.socket.emit('sonar_value', { sonarLeft, sonarRight });
 						} else {
@@ -250,7 +265,6 @@ export default class MainNao {
 					} catch (error) {
 						console.error('Error fetching sonar data:', error);
 					}
-						
 				}, 500);
 			});
 
@@ -363,6 +377,14 @@ export default class MainNao {
 					} catch (error) {
 						console.error('Error shutting down Nao:', error);
 					}
+				}
+			});
+
+			this.socket.on('microphone_event', async (action: string) => {
+				if (action === 'start') {
+					this.startMicrophoneRecording();
+				} else if (action === 'stop') {
+					this.stopMicrophoneRecording();
 				}
 			});
 
@@ -496,6 +518,48 @@ export default class MainNao {
 			}
 		);
 
+		this.robotUtilsNao.subscribeToALMemoryEvent(
+			this.ALMemory,
+			'CustomEvent',
+			async (data: any) => {
+				try {
+					// if (this.socket !== null) {
+					// 	this.socket.emit('custom_event', data);
+					// }
+					console.log('CustomEvent', data);
+					if (data === 'need_ai_response') {
+						await this.getAIAnswer();
+					}
+				} catch (error) {
+					console.error('Error subscribing to CustomEvent:', error);
+				}
+			},
+			() => {
+				// console.log('subscribed successfully to CustomEvent');
+			},
+			() => {
+				console.error('Error subscribing to CustomEvent');
+			}
+		);
+
+		this.robotUtilsNao.subscribeToALMemoryEvent(
+			this.ALMemory,
+			'AIResponse',
+			(data: any) => {
+				try {
+					console.log('AIResponse received in electron', data);
+				} catch (error) {
+					console.error('Error subscribing to AIResponse:', error);
+				}
+			},
+			() => {
+				// console.log('subscribed successfully to AIResponse');
+			},
+			() => {
+				console.error('Error subscribing to AIResponse');
+			}
+		);
+
 		// this.robotUtilsNao.subscribeToALMemoryEvent(
 		// 	this.ALMemory,
 		// 	'SonarLeftDetected',
@@ -539,6 +603,21 @@ export default class MainNao {
 		// );
 	}
 
+	declareMemoryEvents() {
+		if (!this.ALMemory) {
+			console.error('ALMemory service is not available');
+			return;
+		}
+
+		try {
+			this.ALMemory.declareEvent('CustomEvent');
+			this.ALMemory.declareEvent('AIResponse');
+			this.ALMemory.declareEvent('AIImagePrediction');
+		} catch (error) {
+			console.error('Error declaring event:', error);
+		}
+	}
+
 	// async subscribeToSonar() {
 	// 	try {
 	// 		const sonar = await this.ALSonar.subscribe('SonarSubscriber', 100, 0.0);
@@ -549,6 +628,40 @@ export default class MainNao {
 	// 		return null;
 	// 	}
 	// }
+
+	async startMicrophoneRecording() {
+		if (!this.ALAudioRecorder) {
+			console.error('ALAudioRecorder service is not available');
+			return;
+		}
+
+		try {
+			await this.ALAudioRecorder.startMicrophonesRecording('/home/nao/test.wav', 'wav', 16000, [1, 0, 0, 0]);
+			console.log('Started microphone recording');
+		} catch (error) {
+			console.error('Error starting microphone recording:', error);
+		}
+	}
+
+	async stopMicrophoneRecording() {
+		if (!this.ALAudioRecorder) {
+			console.error('ALAudioRecorder service is not available');
+			return;
+		}
+
+		try {
+			await this.ALAudioRecorder.stopMicrophonesRecording();
+			if (!this.ALMemory) {
+				console.error('ALMemory service is not available');
+				return;
+			} else {
+				this.ALMemory.raiseEvent('CustomEvent', 'Microphone recording stopped');
+			}
+			console.log('Stopped microphone recording');
+		} catch (error) {
+			console.error('Error stopping microphone recording:', error);
+		}
+	}
 
 	async subscribeToCamera() {
 		try {
@@ -793,10 +906,103 @@ export default class MainNao {
 			this.programRunning = false;
 			this.sshConnexion = null;
 			this.status = false;
+			this.aiStoredPrompt = [];
 			this.updateCodeRunningStatus();
 			console.log('ssh connexion disposed', this.sshConnexion);
 		} catch (error) {
 			console.log(error);
+		}
+	}
+
+	async getAIAnswer() {
+		try {
+			// console.log('getAIAnswer');
+
+			if (!this.sshConnexion) {
+				this.sshConnexion = new NodeSSH({ debug: console.log });
+				console.log('Connecting to:', this.ipAdress, 'with username:', 'nao');
+				await this.sshConnexion.connect({
+					host: this.ipAdress,
+					username: 'nao',
+					password: 'nao',
+					tryKeyboard: true,
+					port: 22,
+				});
+			}
+
+			const remoteFilePath = '/home/nao/test.wav';
+			const localFilePath = path.join(os.tmpdir(), 'test.wav');
+
+			await this.sshConnexion.getFile(localFilePath, remoteFilePath);
+
+			const audioText = await this.transcribeAudio(localFilePath);
+			const gptResponse = await this.sendToGPT(audioText);
+
+			if (!this.ALMemory) {
+				console.error('ALMemory service is not available');
+				return;
+			}
+
+			this.ALMemory.raiseEvent('AIResponse', gptResponse);
+		} catch (error) {
+			console.log(error);
+		}
+	}
+
+	async transcribeAudio(filePath: string) {
+		const WHISPER_API_URL = 'https://api.openai.com/v1/audio/transcriptions';
+		try {
+			const audioFile = fs.createReadStream(filePath);
+
+			const response = await axios.post(
+				WHISPER_API_URL,
+				{
+					model: 'whisper-1',
+					file: audioFile,
+				},
+				{
+					headers: {
+						Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+						'Content-Type': 'multipart/form-data',
+					},
+				}
+			);
+
+			return response.data.text; // Retourne le texte transcrit
+		} catch (error: any) {
+			console.error('Erreur de transcription:', error.response?.data || error.message);
+			return null;
+		}
+	}
+
+	async sendToGPT(prompt: string) {
+		const GPT_API_URL = 'https://api.openai.com/v1/chat/completions';
+		if (this.aiStoredPrompt.length > 10) {
+			this.aiStoredPrompt.shift();
+		}
+		this.aiStoredPrompt.push({ role: 'user', content: prompt });
+		const message = [{ role: 'system', content: 'Tu es NAO, un robot humanoïde de la société ALDEBARAN intelligent conçu pour interagir, répondre aux questions et aider petits et grands. Tu réponds de manière claire, concise et adaptée, en 30 mots maximum.' }, ...this.aiStoredPrompt];
+		console.log('Message:', message);
+		try {
+			const response = await axios.post(
+				GPT_API_URL,
+				{
+					model: 'gpt-3.5-turbo',
+					messages: message,
+				},
+				{
+					headers: {
+						Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+						'Content-Type': 'application/json',
+					},
+				}
+			);
+
+			this.aiStoredPrompt.push({ role: 'assistant', content: response.data.choices[0].message.content });
+			return response.data.choices[0].message.content;
+		} catch (error: any) {
+			console.error('Erreur avec GPT:', error.response?.data || error.message);
+			return null;
 		}
 	}
 
@@ -817,8 +1023,9 @@ export default class MainNao {
 			}
 			if (this.socket !== null) {
 				this.socket.emit('event', 'Kill_command_sent');
-			} 
+			}
 			const killResult = await this.sshConnexion.execCommand('pkill -f "/home/nao/nao_temp_code.py"');
+			this.aiStoredPrompt = [];
 			console.log('STDERR kill: ' + killResult.stderr);
 			if (this.socket !== null && killResult.stderr) {
 				this.socket.emit('error', killResult.stderr);
@@ -851,6 +1058,8 @@ export default class MainNao {
 		this.ALBattery = null;
 
 		this.robotUtilsNao = null;
+
+		this.aiStoredPrompt = [];
 
 		console.log('Nao has been fully disconnected.');
 
